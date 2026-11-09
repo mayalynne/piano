@@ -901,7 +901,7 @@ const AudioUnlock={el:null,done:false,
     const f=()=>this.unlock(); ['touchend','click','keydown','pointerup'].forEach(ev=>document.addEventListener(ev,f,{capture:true,passive:true}));
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Sound.ctx&&Sound.ctx.state!=='running') Sound.ctx.resume().catch(()=>{});});},
   unlock(){if(this.done&&Sound.ctx&&Sound.ctx.state==='running') return;
-    try{if(navigator.audioSession) navigator.audioSession.type='playback';}catch(e){}
+    try{if(navigator.audioSession&&!(Mic.on||Mic.status==='asking')) navigator.audioSession.type='playback';}catch(e){}
     if(!this.el){try{this.el=new Audio('data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=='); this.el.loop=true; this.el.volume=0.01; this.el.setAttribute('playsinline','');}catch(e){}}
     try{const p=this.el&&this.el.play(); if(p&&p.catch) p.catch(()=>{});}catch(e){}
     try{const c=Sound.ensure(); const b=c.createBuffer(1,1,22050); const src=c.createBufferSource(); src.buffer=b; src.connect(c.destination); src.start(0);
@@ -2423,8 +2423,11 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){this.status='unsupported'; this.msg='This browser can’t use the microphone here.'; UI.midi(); return;}
     this.status='asking'; UI.midi();
     if(!featureAllowed('microphone')){this.status='blocked'; this.msg='The microphone can’t be used inside Claude’s app viewer, even with Chrome’s permission on. To use it, download the app and open it in Chrome, or connect your piano with a USB cable.'; UI.midi(); say(this.msg,12000); return;}
+    /* iPhone: the 'playback' audio session blocks the microphone (InvalidStateError), so switch to play-and-record first */
+    try{if(navigator.audioSession) navigator.audioSession.type='play-and-record';}catch(e){}
+    try{if(AudioUnlock.el) AudioUnlock.el.pause();}catch(e){}
     try{this.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});}
-    catch(e){this.status='blocked';
+    catch(e){this.status='blocked'; try{if(navigator.audioSession) navigator.audioSession.type='playback';}catch(_){}
       this.msg=e&&e.name==='NotAllowedError'?'The microphone was blocked. Allow it in the browser’s address bar and try again. If it still won’t start, the Claude viewer isn’t letting the page use the microphone: open the app on its own site, or connect your piano with a USB cable.':`The microphone didn’t start (${e&&e.name||'unknown error'}).`;
       UI.midi(); return;}
     const ctx=Sound.ensure(); try{await ctx.resume();}catch(e){}
@@ -2433,6 +2436,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     this.on=true; this.status='listening'; UI.midi(); this.timer=setInterval(()=>this.tick(),45);
   },
   stop(){clearInterval(this.timer); this.timer=null; if(this.stream) this.stream.getTracks().forEach(t=>t.stop()); this.stream=null; this.an=null; this.on=false; this.status='off';
+    try{if(navigator.audioSession) navigator.audioSession.type='playback';}catch(e){}
     for(const m of [...Input.src.mic.keys()]) Input.off('mic',m); this.cand.clear(); UI.midi();},
   release(){for(const m of [...Input.src.mic.keys()]) Input.off('mic',m); this.cand.clear();},
   detect(){
