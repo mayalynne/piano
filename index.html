@@ -92,7 +92,8 @@ a{color:inherit}
 .tog.on{color:var(--ink)}
 .tog.on::before{background:var(--ink);opacity:1}
 .tog{position:relative}
-.tog::after{content:"";position:absolute;left:7px;top:11px;width:10px;height:10px;border-radius:50%;background:var(--surface);transition:transform .15s}
+.tog::before{flex:none;box-sizing:border-box}
+.tog::after{content:"";position:absolute;left:7px;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:50%;background:var(--surface);box-sizing:border-box;transition:transform .15s}
 .tog.on::after{transform:translateX(10px)}
 
 /* piano */
@@ -744,6 +745,9 @@ function evaluate(held,tg){
     rest=rest.filter(x=>!tg.pcs.includes(mod(x,12)));
   }
   if(tg.allow) rest=rest.filter(x=>!tg.allow.includes(mod(x,12)));
+  /* microphone: high stray notes are usually overtones of the chord, not wrong notes */
+  if(rest.length&&Input.src.mic.size){const low=hs.find(x=>!rest.includes(x));
+    if(low!=null) rest=rest.filter(x=>!(Input.src.mic.has(x)&&!Input.src.midi.has(x)&&!Input.src.ptr.has(x)&&!Input.src.key.has(x)&&!Input.src.latch.has(x)&&x-low>=12));}
   return {state:(missing.length||rest.length)?'partial':'ok',missing,extra:rest,hs,octaveOff};
 }
 function listJoin(a){a=[...a];if(a.length<=1)return a.join('');return a.slice(0,-1).join(', ')+' and '+a[a.length-1];}
@@ -2461,7 +2465,9 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     this.level=rms; if(this.meter) this.meter.style.width=Math.min(100,Math.round(rms*900))+'%';
     if(ctx.currentTime<(Sound.busyUntil||0)){this.rmsAvg=rms; return;}
     const nearClick=Math.abs(ctx.currentTime-(Sound.lastClickAt??-9))<0.09;
-    const onset=!nearClick&&rms>0.008&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
+    /* a real piano strike on the click is much louder than the click itself, so it still counts as a new note */
+    const jump=rms>0.008&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
+    const onset=jump&&(!nearClick||(rms>0.02&&rms>this.rmsAvg*2.2));
     this.rmsAvg=this.rmsAvg*0.7+rms*0.3;
     if(onset){this.lastOnset=performance.now(); this.release();}
     an.getFloatFrequencyData(this.buf); const notes=rms<0.003?[]:this.detect();
