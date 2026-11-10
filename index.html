@@ -2451,7 +2451,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     const ctx=Sound.ensure(); try{await ctx.resume();}catch(e){}
     const src=ctx.createMediaStreamSource(this.stream); const an=ctx.createAnalyser(); an.fftSize=8192; an.smoothingTimeConstant=0; src.connect(an);
     this.an=an; this.buf=new Float32Array(an.frequencyBinCount); this.td=new Float32Array(2048);
-    this.on=true; this.status='listening'; UI.midi(); this.timer=setInterval(()=>this.tick(),45);
+    this.on=true; this.status='listening'; this.startedAt=ctx.currentTime; this.floor=0; UI.midi(); this.timer=setInterval(()=>this.tick(),45);
   },
   stop(){clearInterval(this.timer); this.timer=null; if(this.stream) this.stream.getTracks().forEach(t=>t.stop()); this.stream=null; this.an=null; this.on=false; this.status='off';
     try{if(navigator.audioSession) navigator.audioSession.type='playback';}catch(e){}
@@ -2483,7 +2483,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     const top=Math.max(...cands.map(at)); return cands.find(m=>at(m)>=top*0.5)??cands[2];
   },
   decide(col){
-    if(!col.frames.length||col.peak<0.035) return; /* too quiet to be a key strike: room noise */
+    if(!col.frames.length||col.peak<Math.max(0.0012,(this.floor||0)*6)) return; /* too quiet to be a key strike: room noise */
     const {c,raw,mag,ok}=this.chroma(col.frames); if(!ok) return;
     const exp=this.expected(); let notes=null;
     if(exp.single){
@@ -2498,10 +2498,10 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     } else {
       let best=null;
       for(const T of MIC_T){let s=0; for(let i=0;i<12;i++) s+=c[i]*T.t[i]; if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; if(!best||s>best.s) best={s,T};}
-      if(!best||best.s<0.62) return;
+      if(!best||best.s<0.75) return; /* real chords score ~0.9; noise scores lower */
       const pcs=best.T.pcs;
       if(exp.now.length&&exp.key(exp.now.map(m=>mod(m,12)))===exp.key(pcs)) notes=exp.now.slice();
-      else notes=pcs.map(pc=>this.octaveFor(pc,mag));
+      else{notes=pcs.map(pc=>this.octaveFor(pc,mag)); if(Math.max(...notes)<48) return;} /* only low rumble: a bump or handling noise, not a chord */
     }
     notes=[...new Set(notes)].sort((a,b)=>a-b);
     for(const m of notes) Input.on('mic',m,0.7,col.ts);
@@ -2509,12 +2509,15 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
   tick(){
     const an=this.an, ctx=Sound.ctx; if(!an||!ctx) return;
     an.getFloatTimeDomainData(this.td); let s=0; for(let i=0;i<this.td.length;i++) s+=this.td[i]*this.td[i]; const rms=Math.sqrt(s/this.td.length);
-    this.level=rms; if(this.meter) this.meter.style.width=Math.min(100,Math.round(rms*900))+'%';
+    this.level=rms; if(this.meter) this.meter.style.width=micPct(rms)+'%';
     if(ctx.currentTime<(Sound.busyUntil||0)){this.rmsAvg=rms; this.col=null; this.hist=[]; return;}
     const nearClick=Math.abs(ctx.currentTime-(Sound.lastClickAt??-9))<0.09;
     /* a real piano strike on the click is much louder than the click itself, so it still counts as a new note */
-    const jump=rms>0.008&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
-    const onset=jump&&(!nearClick||(rms>0.02&&rms>this.rmsAvg*2.2));
+    /* levels are judged against the room's own background noise, so quiet microphones (iPad, no auto-gain) work too */
+    if(!this.floor) this.floor=Math.max(rms,1e-5); this.floor=rms<this.floor?rms:this.floor*0.997+rms*0.003;
+    const fl=Math.max(this.floor,0.0003);
+    const jump=rms>fl*4&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
+    const onset=jump&&(!nearClick||(rms>fl*10&&rms>this.rmsAvg*2.2))&&ctx.currentTime-(this.startedAt||0)>1.2; /* first second: learn the room's noise */
     this.rmsAvg=this.rmsAvg*0.7+rms*0.3;
     an.getFloatFrequencyData(this.buf); const frame=Float32Array.from(this.buf);
     if(onset){this.lastOnset=performance.now(); this.onsetCtx=ctx.currentTime-0.05; this.release();
@@ -2527,7 +2530,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
       if(el>=0.22&&this.col.frames.length>=2){const col=this.col; this.col=null; this.peak=col.peak; this.decide(col);}
       return;}
     /* let go of the notes once the sound has faded */
-    if(Input.src.mic.size&&rms<Math.max(0.0025,(this.peak||0)*0.08)){this.quiet=(this.quiet||0)+1; if(this.quiet>=3) this.release();} else this.quiet=0;
+    if(Input.src.mic.size&&rms<Math.max((this.floor||0)*2,(this.peak||0)*0.08)){this.quiet=(this.quiet||0)+1; if(this.quiet>=3) this.release();} else this.quiet=0;
   }
 };
 const MIC_Q={'':[0,4,7],m:[0,3,7],'5':[0,7],'7':[0,4,7,10],maj7:[0,4,7,11],m7:[0,3,7,10],sus2:[0,2,7],sus4:[0,5,7],dim:[0,3,6],aug:[0,4,8],note:[0]};
@@ -2575,7 +2578,9 @@ function hearUpdate(){const on=Mic.status==='listening'||Midi.status==='connecte
   const n=[...Input.src.mic.keys(),...Input.src.midi.keys()].sort((a,b)=>a-b).map(m=>NN[mod(m,12)]+(Math.floor(m/12)-1));
   hearEl.querySelector('b').textContent=n.length?n.join(' '):'…'; hearEl.firstChild.textContent=n.length?'Heard:':(Mic.status==='listening'?'Listening':'Connected');}
 Input.subs.add(hearUpdate);
-setInterval(()=>{if(Mic.status==='listening'){hearUpdate(); hearEl.querySelector('.lv i').style.width=Math.min(100,Math.round(Mic.level*900))+'%';}},80);
+setInterval(()=>{if(Mic.status==='listening'){hearUpdate(); hearEl.querySelector('.lv i').style.width=micPct(Mic.level)+'%';}},80);
+/* level bar on a decibel scale, so a quiet microphone still shows movement */
+function micPct(r){return Math.max(0,Math.min(100,Math.round((20*Math.log10((r||0)+1e-9)+66)*1.8)));}
 const toastEl=document.createElement('div'); toastEl.className='toast'; toastEl.hidden=true; toastEl.setAttribute('role','status'); const toastTxt=document.createElement('span'); toastEl.append(toastTxt,closeBtn('Close message',()=>{toastEl.hidden=true; clearTimeout(toastT);})); document.body.appendChild(toastEl); let toastT=0, lastMicSt='';
 function say(t,ms=9000){toastTxt.textContent=t; toastEl.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>{toastEl.hidden=true;},ms);}
 function micSay(){const s=Mic.status; if(s===lastMicSt) return; lastMicSt=s; if(s==='asking') say('Asking for the microphone. Tap Allow if your browser asks.'); else if(s==='listening') say('Listening. Play a note on your piano.',5000); else if(s==='blocked'||s==='unsupported') say(Mic.msg||'The microphone is not available here.',20000);}
