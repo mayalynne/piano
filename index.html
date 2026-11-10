@@ -1417,7 +1417,7 @@ STEP.find=(d,api)=>{
   const {w}=api; const n=parseNote(d.pc); w.task.append(taskBlock(d.text));
   App.piano.configure({markers:[],fit:[48,72],force:true});
   return {onInput(e){if(e.type!=='on') return; if(mod(e.m,12)===n.pc){api.feedback(`Yes, that’s ${pretty(n.name)}${octaveOf(e.m)}. Every ${pretty(n.name)} sits in the same spot in each octave.`,'ok'); App.piano.configure({markers:[{m:e.m,color:'ink'}]}); api.done();}
-    else api.feedback(`That’s ${pretty(COMMON[mod(e.m,12)])}. ${mod(e.m,12)>n.pc?'Go lower.':'Go higher.'}`,'bad');}};
+    else api.feedback(`That’s ${pretty(COMMON[mod(e.m,12)])}. ${mod(e.m,12)>n.pc?'Go lower.':'Go higher.'}`,'bad');},ctx:()=>({task:'find a note',single:true})};
 };
 STEP.sequence=(d,api)=>{
   const {w}=api; const ms=toMidis(d.notes); let i=0, shown=!!d.markers, wrongs=0;
@@ -1440,7 +1440,7 @@ STEP.sequence=(d,api)=>{
       } else {wrongs++; mistake(`melody: played ${COMMON[mod(e.m,12)]} for ${COMMON[mod(want,12)]}`);
         const dir=e.m<want?'higher':'lower'; api.feedback(d.markers?`That’s ${pretty(COMMON[mod(e.m,12)])}. Play the dark dot.`:`Not quite. The next note is ${dir}${Math.abs(e.m-want)<=2?', very close':''}.`,'bad');}
       draw();},
-    ctx:()=>({task:'play a note sequence',noteIndex:i,total:ms.length}),
+    ctx:()=>({task:'play a note sequence',noteIndex:i,total:ms.length,single:true}),
     tip:()=>d.melody?'Sing the phrase in your head before you play it. Melodies mostly move by step, so the next note is usually right next door.':null
   };
 };
@@ -1644,7 +1644,7 @@ STEP.recipe=(d,api)=>{
         else{const from=placed[k-1], dist=e.m-from; showCount=true; draw();
           api.feedback(dist>0?`That’s ${dist} half step${dist>1?'s':''} up from ${pretty(c.tones[k-1].name)}. You need ${gap(k)}. Count along the numbers.`:`Go up from ${pretty(c.tones[k-1].name)}, to the right. Count ${gap(k)} keys.`,'bad');}}
     },
-    ctx:()=>({task:'build a chord step by step',chord:c.sym,notesPlaced:k}),
+    ctx:()=>({task:'build a chord step by step',chord:c.sym,notesPlaced:k,single:true}),
     tip:()=>recipeWhy(c)
   };
 };
@@ -1670,7 +1670,7 @@ STEP.notefind=(d,api)=>{
         else{api.feedback(`${pcName(target)}, ${(ms/1000).toFixed(1)} s.`,'ok'); setTimeout(next,600);}}
       else{missed=true; api.feedback(`That’s ${pcName(mod(e.m,12))}. ${LANDMARK[target]}`,'bad');}
     },
-    ctx:()=>({task:'find notes by name',done:n,of:d.count}),
+    ctx:()=>({task:'find notes by name',done:n,of:d.count,single:true}),
     tip:()=>'Use the black keys as landmarks: C, D and E sit around the pair; F, G, A and B around the three.'
   };
 };
@@ -2239,7 +2239,7 @@ function songPlayer(box,song){
       if(!pitchOk){fb.className='ws-fb bad'; fb.textContent=`${sp(mod(e.m,12))} isn’t in this spot. Expected ${best.pcs?listJoin(best.pcs.map(sp)):listJoin(best.notes.map(n=>sp(mod(n,12))))}.`; mistake(`wrong pitch in ${song.title}`);}
       else{fb.className='ws-fb '+(Math.abs(off)<70?'ok':'hint'); fb.textContent=Math.abs(off)<70?'On time.':(off<0?`Early by ${Math.round(-off)} ms.`:`Late by ${Math.round(off)} ms.`);}
     },
-    ctx:()=>({page:'Songs',song:song.title,key:song.key,tempo:P.tempo||song.tempo,mode:P.mode,hands:P.hands,leftHandPattern:P.pattern,waitForMe:wait,currentChord:(barAt(player.beat)||{}).sym,chords:model.bars.map(b=>b.sym).join(' ')}),
+    ctx:()=>({single:P.mode==='melody',page:'Songs',song:song.title,key:song.key,tempo:P.tempo||song.tempo,mode:P.mode,hands:P.hands,leftHandPattern:P.pattern,waitForMe:wait,currentChord:(barAt(player.beat)||{}).sym,chords:model.bars.map(b=>b.sym).join(' ')}),
     tip:()=>{const tr=Object.entries(S.trans).filter(([k])=>model.bars.some((b,i)=>model.bars[i+1]&&k===b.sym+'>'+model.bars[i+1].sym)).sort((a,b)=>b[1].ms-a[1].ms)[0];
       if(tr&&tr[1].ms>1400){const [a,b]=tr[0].split('>'); return `${pretty(a)} to ${pretty(b)} is your slowest change in this song. Loop that section with “Wait for me” on, and switch to smooth inversions.`;}
       return wait?'“Wait for me” pauses on every chord or note until you play it. Turn it off and lower the tempo to practice keeping time.':'Start slower than feels necessary. Raise the tempo only after two clean runs.';},
@@ -2449,49 +2449,91 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
       this.msg=e&&e.name==='NotAllowedError'?'The microphone was blocked. Allow it in the browser’s address bar and try again. If it still won’t start, the Claude viewer isn’t letting the page use the microphone: open the app on its own site, or connect your piano with a USB cable.':`The microphone didn’t start (${e&&e.name||'unknown error'}).`;
       UI.midi(); return;}
     const ctx=Sound.ensure(); try{await ctx.resume();}catch(e){}
-    const src=ctx.createMediaStreamSource(this.stream); const an=ctx.createAnalyser(); an.fftSize=16384; an.smoothingTimeConstant=0; src.connect(an);
+    const src=ctx.createMediaStreamSource(this.stream); const an=ctx.createAnalyser(); an.fftSize=8192; an.smoothingTimeConstant=0; src.connect(an);
     this.an=an; this.buf=new Float32Array(an.frequencyBinCount); this.td=new Float32Array(2048);
     this.on=true; this.status='listening'; UI.midi(); this.timer=setInterval(()=>this.tick(),45);
   },
   stop(){clearInterval(this.timer); this.timer=null; if(this.stream) this.stream.getTracks().forEach(t=>t.stop()); this.stream=null; this.an=null; this.on=false; this.status='off';
     try{if(navigator.audioSession) navigator.audioSession.type='playback';}catch(e){}
     for(const m of [...Input.src.mic.keys()]) Input.off('mic',m); this.cand.clear(); UI.midi();},
-  release(){for(const m of [...Input.src.mic.keys()]) Input.off('mic',m); this.cand.clear();},
-  detect(){
-    const b=this.buf, sr=Sound.ctx.sampleRate, N=this.an.fftSize, hz=i=>i*sr/N;
-    const lo=Math.floor(60*N/sr), hi=Math.ceil(1250*N/sr); let max=-Infinity;
-    for(let i=lo;i<hi;i++) if(b[i]>max) max=b[i];
-    if(max<-72) return [];
-    const thr=Math.max(max-26,-88), byM=new Map();
-    for(let i=lo+1;i<hi-1;i++){const v=b[i]; if(v>thr&&v>b[i-1]&&v>=b[i+1]){const a=b[i-1],c=b[i+1]; const den=a-2*v+c; const p=den?0.5*(a-c)/den:0;
-      const f=hz(i+p), mid=69+12*Math.log2(f/440), r=Math.round(mid); if(Math.abs(mid-r)>0.35) continue; const q=byM.get(r); if(!q||v>q.v) byM.set(r,{f,m:r,v});}}
-    const list=[...byM.values()].sort((x,y)=>x.f-y.f), out=[];
-    const at=f=>{const i=Math.round(f*N/sr); return i>0&&i<b.length?Math.max(b[i-1],b[i],b[i+1]):-200;};
-    list.forEach((p,j)=>{let harm=false;
-      for(let n=0;n<j;n++){const q=list[n]; const r=p.f/q.f, k=Math.round(r); if(k>=2&&k<=9&&Math.abs(r-k)/k<0.02&&p.v<q.v+10){harm=true;break;}
-        if(Math.abs(r-1.5)<0.02&&p.v<q.v&&at(q.f/2)>thr-6&&!list.some(x=>Math.abs(x.f*2/q.f-1)<0.02)){harm=true;break;}}
-      if(!harm) out.push(p);});
-    return out.filter(p=>p.v>max-16).sort((x,y)=>y.v-x.v).slice(0,5).map(p=>p.m);
+  release(){for(const m of [...Input.src.mic.keys()]) Input.off('mic',m); this.cand.clear(); this.col=null;},
+  /* Chord recognition by matching the whole sound against chord shapes (chroma), tested on a real piano recording.
+     Picking out single notes from a piano's overtones is unreliable; asking "does this sound like C major?" is not. */
+  chroma(frames){
+    const sr=Sound.ctx.sampleRate, N=this.an.fftSize, nb=frames[0].length, F=frames.length;
+    const lo=Math.floor(55*N/sr), hi=Math.min(nb-1,Math.ceil(2100*N/sr)); const mag=new Float32Array(nb);
+    for(const fr of frames) for(let k=lo;k<=hi;k++) mag[k]+=Math.pow(10,fr[k]/20)/F;
+    const c=new Float32Array(12);
+    for(let k=Math.max(1,lo);k<=hi;k++){const f=k*sr/N, m=69+12*Math.log2(f/440), r=Math.round(m); if(Math.abs(m-r)>0.4) continue; c[mod(r,12)]+=mag[k]*mag[k]*(f<1100?1:0.5);}
+    let n=0; for(let i=0;i<12;i++){c[i]=Math.sqrt(c[i]); n+=c[i]*c[i];} n=Math.sqrt(n); const raw=Float32Array.from(c); if(n) for(let i=0;i<12;i++) c[i]/=n;
+    return {c,raw,mag,ok:n>0};
+  },
+  expected(){
+    const key=a=>[...new Set(a)].sort((x,y)=>x-y).join(','); const keys=new Set();
+    const now=(App.piano?App.piano.markers:[]).filter(x=>!x.ring).map(x=>x.m);
+    if(now.length) keys.add(key(now.map(m=>mod(m,12))));
+    let cx={}; try{cx=(App.ctrl&&App.ctrl.ctx&&App.ctrl.ctx())||{};}catch(e){}
+    for(const s of [cx.chord,cx.currentChord,cx.exploringChord]){const ch=s&&parseChord(String(s)); if(ch) keys.add(key(ch.pcs));}
+    return {keys,now,single:!!cx.single,key};
+  },
+  octaveFor(pc,mag){
+    const sr=Sound.ctx.sampleRate, N=this.an.fftSize;
+    const at=m=>{const k=Math.round(440*Math.pow(2,(m-69)/12)*N/sr); return Math.max(mag[k-1]||0,mag[k]||0,mag[k+1]||0);};
+    const cands=[]; for(let m=36;m<=84;m++) if(mod(m,12)===pc) cands.push(m);
+    const top=Math.max(...cands.map(at)); return cands.find(m=>at(m)>=top*0.5)??cands[2];
+  },
+  decide(col){
+    if(!col.frames.length||col.peak<0.035) return; /* too quiet to be a key strike: room noise */
+    const {c,raw,mag,ok}=this.chroma(col.frames); if(!ok) return;
+    const exp=this.expected(); let notes=null;
+    if(exp.single){
+      /* one note at a time: take the note that got louder at this strike, so notes still ringing don't count again */
+      /* compare loudness before and after the strike (not normalised, so a fading note can't look new) */
+      const pre=col.pre?this.chroma([col.pre]).raw:null; let top=0; for(let i=0;i<12;i++) top=Math.max(top,raw[i]);
+      const rise=i=>(raw[i]-(pre?pre[i]*0.8:0))/(top||1);
+      let bp=0; for(let i=1;i<12;i++) if(rise(i)>rise(bp)) bp=i;
+      if(exp.now.length===1){const want=mod(exp.now[0],12); if(rise(want)>=rise(bp)*0.7) bp=want;}
+      if(rise(bp)<0.25) return;
+      const hit=exp.now.find(m=>mod(m,12)===bp); notes=[hit??this.octaveFor(bp,mag)];
+    } else {
+      let best=null;
+      for(const T of MIC_T){let s=0; for(let i=0;i<12;i++) s+=c[i]*T.t[i]; if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; if(!best||s>best.s) best={s,T};}
+      if(!best||best.s<0.62) return;
+      const pcs=best.T.pcs;
+      if(exp.now.length&&exp.key(exp.now.map(m=>mod(m,12)))===exp.key(pcs)) notes=exp.now.slice();
+      else notes=pcs.map(pc=>this.octaveFor(pc,mag));
+    }
+    notes=[...new Set(notes)].sort((a,b)=>a-b);
+    for(const m of notes) Input.on('mic',m,0.7,col.ts);
   },
   tick(){
     const an=this.an, ctx=Sound.ctx; if(!an||!ctx) return;
     an.getFloatTimeDomainData(this.td); let s=0; for(let i=0;i<this.td.length;i++) s+=this.td[i]*this.td[i]; const rms=Math.sqrt(s/this.td.length);
     this.level=rms; if(this.meter) this.meter.style.width=Math.min(100,Math.round(rms*900))+'%';
-    if(ctx.currentTime<(Sound.busyUntil||0)){this.rmsAvg=rms; return;}
+    if(ctx.currentTime<(Sound.busyUntil||0)){this.rmsAvg=rms; this.col=null; this.hist=[]; return;}
     const nearClick=Math.abs(ctx.currentTime-(Sound.lastClickAt??-9))<0.09;
     /* a real piano strike on the click is much louder than the click itself, so it still counts as a new note */
     const jump=rms>0.008&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
     const onset=jump&&(!nearClick||(rms>0.02&&rms>this.rmsAvg*2.2));
     this.rmsAvg=this.rmsAvg*0.7+rms*0.3;
-    if(onset){this.lastOnset=performance.now(); this.onsetCtx=ctx.currentTime-0.05; this.release();}
-    an.getFloatFrequencyData(this.buf); const notes=rms<0.003?[]:this.detect();
-    for(const m of [...notes].sort((x,y)=>x-y)){const c=this.cand.get(m)||{hit:0,miss:0}; c.hit++; c.miss=0; this.cand.set(m,c);
-      if(c.hit<2||Input.src.mic.has(m)) continue; const same=[...Input.src.mic.keys()].find(x=>mod(x,12)===mod(m,12));
-      if(same!=null){if(same>m){Input.off('mic',same); Input.on('mic',m,0.7,performance.now()-this.LAG*1000);}}
-      else Input.on('mic',m,0.7,performance.now()-this.LAG*1000);}
-    for(const [m,c] of this.cand) if(!notes.includes(m)){c.miss++; c.hit=Math.max(0,c.hit-1); if(c.miss>=5){this.cand.delete(m); if(Input.src.mic.has(m)) Input.off('mic',m);}}
+    an.getFloatFrequencyData(this.buf); const frame=Float32Array.from(this.buf);
+    if(onset){this.lastOnset=performance.now(); this.onsetCtx=ctx.currentTime-0.05; this.release();
+      /* "before" = a frame from ~0.3 s ago, safely ahead of the strike */
+      const hist=this.hist||[]; const pre=hist.find(h=>ctx.currentTime-h.t>=0.28)||hist[0];
+      this.col={t:ctx.currentTime,ts:performance.now()-50,frames:[],pre:pre?pre.f:null,peak:rms}; this.quiet=0;}
+    this.hist=[{t:ctx.currentTime,f:frame},...(this.hist||[])].slice(0,10);
+    if(this.col){const el=ctx.currentTime-this.col.t; this.col.peak=Math.max(this.col.peak,rms);
+      if(el>=0.06) this.col.frames.push(frame);
+      if(el>=0.22&&this.col.frames.length>=2){const col=this.col; this.col=null; this.peak=col.peak; this.decide(col);}
+      return;}
+    /* let go of the notes once the sound has faded */
+    if(Input.src.mic.size&&rms<Math.max(0.0025,(this.peak||0)*0.08)){this.quiet=(this.quiet||0)+1; if(this.quiet>=3) this.release();} else this.quiet=0;
   }
 };
+const MIC_Q={'':[0,4,7],m:[0,3,7],'5':[0,7],'7':[0,4,7,10],maj7:[0,4,7,11],m7:[0,3,7,10],sus2:[0,2,7],sus4:[0,5,7],dim:[0,3,6],aug:[0,4,8],note:[0]};
+const MIC_T=(()=>{const out=[]; for(let r=0;r<12;r++) for(const q in MIC_Q){const t=new Float32Array(12);
+  for(const s of MIC_Q[q]){const p=(r+s)%12; t[p]+=1; t[(p+7)%12]+=0.33; t[(p+4)%12]+=0.15;}
+  let n=0; for(const v of t) n+=v*v; n=Math.sqrt(n); for(let i=0;i<12;i++) t[i]/=n; out.push({r,q,t,pcs:MIC_Q[q].map(s=>(r+s)%12)});} return out;})();
 
 /* ===== MIDI popover ===== */
 const UI={
