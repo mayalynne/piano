@@ -575,6 +575,13 @@ body .run-nav>.ws-guide p{flex:0 1 auto;text-align:right}
 body .run-nav>.ws-guide .gd{margin-top:0}
 .ask-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:1.5px solid currentColor;border-radius:50%;background:transparent;color:var(--ink);font:600 14px/1 var(--font);cursor:pointer}
 .ask-btn:hover{background:var(--ink);color:var(--bg)}
+/* ===== Chord and step details sit between the task card and the keys ===== */
+body .ws>.ws-info{margin:14px 0 2px;padding:0;border:0}
+body .ws>.ws-info:empty{display:none}
+body .ws-bottom:has(.ws-actions:empty){display:none}
+body .ws>.ws-info .readout{gap:14px 28px}
+body .run-nav>.btn.primary.skip{background:transparent;border-color:var(--line);color:var(--mute)}
+body .run-nav>.btn.primary.skip:hover{color:var(--ink);border-color:var(--mute);opacity:1}
 @media (pointer:coarse){.ask-btn{width:40px;height:40px;font-size:16px}}
 body .run-nav>.ws-guide{flex-wrap:nowrap}
 body .run-nav>.ws-guide p{min-width:0}
@@ -1801,10 +1808,13 @@ STEP.pulse=(d,api)=>{
   function stop(){running=false; clearInterval(timer); cancelAnimationFrame(raf); startBtn.textContent='Start';}
   App.piano.configure({fit:[55,79],force:true}); show(0);
   return {
-    onInput(e){if(!running||fin||e.type!=='on') return; const ctx=Sound.ctx; const tb=(ctx.currentTime-(e.src==='mic'?Mic.LAG:0)-t0)/spb(); if(tb<-0.5) return;
+    onInput(e){if(!running||fin||e.type!=='on') return; const ctx=Sound.ctx; const mic=e.src==='mic';
+      /* microphone: time the note from the moment the sound started, not from when its pitch was recognised */
+      const at=mic?((Mic.onsetCtx!=null&&ctx.currentTime-Mic.onsetCtx<0.7)?Mic.onsetCtx:ctx.currentTime-Mic.LAG):ctx.currentTime;
+      const tb=(at-t0)/spb(); if(tb<-0.5) return;
       const step=per==='bar'?4:1; const target=Math.round(tb/step)*step; if(hitBeats.has(target)) return; 
-      const c=chordAtBeat(target); if(!c.pcs.includes(mod(e.m,12))){api.feedback(`${pretty(COMMON[mod(e.m,12)])} isn’t in ${c.label}. Watch the dots.`,'bad'); return;}
-      hitBeats.add(target); const dev=(tb-target)*spb()*1000; total++; const ok=Math.abs(dev)<=130; if(ok) onTime++;
+      const c=chordAtBeat(target); if(!c.pcs.includes(mod(e.m,12))){if(mic) return; api.feedback(`${pretty(COMMON[mod(e.m,12)])} isn’t in ${c.label}. Watch the dots.`,'bad'); return;}
+      hitBeats.add(target); const dev=(tb-target)*spb()*1000; total++; const ok=Math.abs(dev)<=(mic?220:130); if(ok) onTime++;
       score.textContent=`${onTime} of ${total} on time`;
       api.feedback(ok?'On time.':dev<0?`A little early (${Math.round(-dev)} ms). Wait for the click.`:`A little late (${Math.round(dev)} ms). Get ready during the last count.`,ok?'ok':'bad');
       if(total>=goal&&onTime/total>=0.7){fin=true; recSkill('timing',true); stop(); api.feedback(`${onTime} of ${total} on time. Steady rhythm.`,'ok'); api.done();}
@@ -1829,12 +1839,12 @@ function buildWorkspace(){
   const w={};
   w.el=h('section',{class:'ws'},
     w.top=h('div',{class:'ws-top'},w.task=h('div',{class:'ws-task'}),w.controls=h('div',{class:'ws-controls'})),
+    w.info=h('div',{class:'ws-info'}),
     w.slot=h('div',{class:'piano-slot'}),
     w.fb=h('p',{class:'ws-fb hint','aria-live':'polite'}),
-    w.bottom=h('div',{class:'ws-bottom'},w.info=h('div',{class:'ws-info'}),w.actions=h('div',{class:'ws-actions'})),
+    w.bottom=h('div',{class:'ws-bottom'},w.actions=h('div',{class:'ws-actions'})),
     w.guide=h('div',{class:'ws-guide'}));
   w.reset=()=>{[w.task,w.controls,w.info,w.actions,w.guide].forEach(x=>x.replaceChildren()); w.fb.textContent=''; w.fb.className='ws-fb hint';};
-  new MutationObserver(()=>{const b=w.task.querySelector('.task'); if(b){if(w.info.parentNode!==b) b.append(w.info);} else if(w.info.parentNode!==w.bottom) w.bottom.prepend(w.info);}).observe(w.task,{childList:true});
   return w;
 }
 function StepRunner(root,steps,opts={}){
@@ -1849,7 +1859,8 @@ function StepRunner(root,steps,opts={}){
     feedback(t,tone){clearTimeout(api._t); if(!t) return; w.fb.textContent=t; w.fb.className='ws-fb '+(tone||'hint');},
     tip(){drawTip();}};
   function drawStepper(){stepper.replaceChildren(...steps.map((s,k)=>h('li',{class:(k===i?'on ':'')+(done.has(k)?'done':''),'aria-current':k===i?'step':null},String(k+1))));}
-  function drawNav(){back.disabled=i===0; const can=done.has(i); next.disabled=!can; next.textContent=i<steps.length-1?'Next step':(opts.finishLabel||'Finish lesson');}
+  function drawNav(){back.disabled=i===0; const can=done.has(i); next.disabled=false; next.classList.toggle('skip',!can);
+    next.textContent=can?(i<steps.length-1?'Next step':(opts.finishLabel||'Finish lesson')):(i<steps.length-1?'Skip this step':'Skip and finish');}
   function drawTip(){const t=(cur&&cur.tip&&cur.tip())||steps[i].tip||Teacher.fallbackTip();
     w.guide.replaceChildren(h('span',{class:'gd'}),h('p',null,t||''),h('button',{class:'ask-btn',type:'button','aria-label':'Ask the teacher',title:'Ask the teacher',onclick:()=>Teacher.show()},'?'));}
   function go(k){cur&&cur.destroy&&cur.destroy(); player.stop(); i=clamp(k,0,steps.length-1); doneAt=-1; w.reset(); App.piano.reset();
@@ -1874,7 +1885,10 @@ const App={view:null,ctrl:null,piano:null,pendingSongNote:null,
 /* Chord name floating over the keys you're holding */
 {const base=Piano.prototype.render;
  Piano.prototype.render=function(){base.call(this); if(!this.keys) return;
-   const held=[...Input.held()]; const id=held.length>=2?identify(held):null;
+   const held=[...Input.held()]; let id=held.length>=2?identify(held):null;
+   /* microphone: if stray overtones hide the chord, try again without the highest, then the lowest, extra notes */
+   if(!id&&Input.src.mic.size&&held.length>3){const a=held.slice().sort((x,y)=>x-y); while(!id&&a.length>3){a.pop(); id=identify(a);}
+     if(!id){const b=held.slice().sort((x,y)=>x-y); while(!id&&b.length>3){b.shift(); id=identify(b);}}}
    let b=this._chordBadge; if(!b||b.parentNode!==this.kb){b=this._chordBadge=h('div',{class:'kb-chord','aria-live':'polite',hidden:true}); this.kb.append(b);}
    if(!id){b.hidden=true; return;}
    const vis=held.filter(m=>this.keys.has(m)); let x=50;
@@ -2454,10 +2468,10 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     const list=[...byM.values()].sort((x,y)=>x.f-y.f), out=[];
     const at=f=>{const i=Math.round(f*N/sr); return i>0&&i<b.length?Math.max(b[i-1],b[i],b[i+1]):-200;};
     list.forEach((p,j)=>{let harm=false;
-      for(let n=0;n<j;n++){const q=list[n]; const r=p.f/q.f, k=Math.round(r); if(k>=2&&k<=9&&Math.abs(r-k)/k<0.02&&p.v<q.v+6){harm=true;break;}
+      for(let n=0;n<j;n++){const q=list[n]; const r=p.f/q.f, k=Math.round(r); if(k>=2&&k<=9&&Math.abs(r-k)/k<0.02&&p.v<q.v+10){harm=true;break;}
         if(Math.abs(r-1.5)<0.02&&p.v<q.v&&at(q.f/2)>thr-6&&!list.some(x=>Math.abs(x.f*2/q.f-1)<0.02)){harm=true;break;}}
       if(!harm) out.push(p);});
-    return out.filter(p=>p.v>max-20).sort((x,y)=>y.v-x.v).slice(0,6).map(p=>p.m);
+    return out.filter(p=>p.v>max-16).sort((x,y)=>y.v-x.v).slice(0,5).map(p=>p.m);
   },
   tick(){
     const an=this.an, ctx=Sound.ctx; if(!an||!ctx) return;
@@ -2469,7 +2483,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     const jump=rms>0.008&&rms>this.rmsAvg*1.45&&performance.now()-this.lastOnset>140;
     const onset=jump&&(!nearClick||(rms>0.02&&rms>this.rmsAvg*2.2));
     this.rmsAvg=this.rmsAvg*0.7+rms*0.3;
-    if(onset){this.lastOnset=performance.now(); this.release();}
+    if(onset){this.lastOnset=performance.now(); this.onsetCtx=ctx.currentTime-0.05; this.release();}
     an.getFloatFrequencyData(this.buf); const notes=rms<0.003?[]:this.detect();
     for(const m of [...notes].sort((x,y)=>x-y)){const c=this.cand.get(m)||{hit:0,miss:0}; c.hit++; c.miss=0; this.cand.set(m,c);
       if(c.hit<2||Input.src.mic.has(m)) continue; const same=[...Input.src.mic.keys()].find(x=>mod(x,12)===mod(m,12));
