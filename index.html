@@ -1173,7 +1173,7 @@ const SAMPLE_SONGS=[
   mkSong('elise','Für Elise (opening)','Ludwig van Beethoven','A minor',90,'[Theme]\nAm:4 Am:3 E:3 Am:2','E5:0.5 D#5:0.5 E5:0.5 D#5:0.5 E5:0.5 B4:0.5 D5:0.5 C5:0.5 | A4:1.5 C4:0.5 E4:0.5 A4:0.5 | B4:1.5 E4:0.5 G#4:0.5 B4:0.5 | C5:2','Public-domain classic. Try the right hand alone first.'),
   mkSong('canon','Canon in D (chords)','Johann Pachelbel','D major',70,'[Progression]\nD A Bm F#m\nG D G A','','Public-domain chord progression behind many pop songs. Play the chords with both hands.')
 ];
-function freshState(){return {v:1,updatedAt:0,curv:3,lessons:{},current:'f-1',chords:{},myChords:[],recog:{},trans:{},
+function freshState(){return {v:1,updatedAt:0,curv:3,lessons:{},current:'f-1',chords:{},myChords:[],recog:{},trans:{},micLearn:{},
   skills:{melody:{a:0,c:0},timing:{n:0,ms:0},twoHand:{a:0,c:0},ear:{a:0,c:0},notes:{a:0,c:0,best:null},quality:{a:0,c:0},speed:{n:0,last:null,best:null}},mistakes:[],days:{},
   songs:[{...ODE},...SAMPLE_SONGS.map(x=>({...x}))],seedV1:true,songId:'ode',songPrefs:{mode:'chords',hands:'rh',pattern:'bass',voicing:'smooth',tempo:null},
   settings:{labels:true,markers:true,echo:false,sound:'piano',midiOn:false,midiId:null,legend:false,pool:'mine'}};}
@@ -2468,6 +2468,8 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     let n=0; for(let i=0;i<12;i++){c[i]=Math.sqrt(c[i]); n+=c[i]*c[i];} n=Math.sqrt(n); const raw=Float32Array.from(c); if(n) for(let i=0;i<12;i++) c[i]/=n;
     return {c,raw,mag,ok:n>0};
   },
+  learn(T,c,low){const L=S.micLearn||(S.micLearn={}); const k=T.q+'|'+T.r, band=low<55?'low':low<67?'mid':'high';
+    const e=L[k]||(L[k]={}); const o=e[band]; e[band]=Array.from(c,(v,i)=>o?o[i]*0.7+v*0.3:v); Store.save();},
   expected(){
     const key=a=>[...new Set(a)].sort((x,y)=>x-y).join(','); const keys=new Set();
     const now=(App.piano?App.piano.markers:[]).filter(x=>!x.ring).map(x=>x.m);
@@ -2498,15 +2500,22 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
       const hit=exp.now.find(m=>mod(m,12)===bp); notes=[hit??this.octaveFor(bp,mag)];
     } else {
       let best=null;
-      const cal=S.settings.micCal||{};
+      const cal=S.settings.micCal||{}, learnt=S.micLearn||{}; const all=[];
+      const cos=v=>{let d=0,n=0; for(let i=0;i<12;i++){d+=c[i]*v[i]; n+=v[i]*v[i];} return n?d/Math.sqrt(n):0;};
       for(const T of MIC_T){let s=0; for(let i=0;i<12;i++) s+=c[i]*T.t[i];
-        /* chord shapes learned from this piano (any octave it was tuned in), moved to this root */
-        for(const v of (cal[T.q]||[])){let d=0,n=0; for(let i=0;i<12;i++){const w=v[mod(i-T.r,12)]; d+=c[i]*w; n+=w*w;} if(n) s=Math.max(s,d/Math.sqrt(n));}
-        if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; if(!best||s>best.s) best={s,T};}
+        /* chord shapes learned from this piano when tuning (C major, A minor), moved to this root */
+        for(const v of (cal[T.q]||[])) s=Math.max(s,cos(v.map((_,i)=>v[mod(i-T.r,12)])));
+        /* this exact chord, as it sounded when you played it in exercises, in any octave */
+        const lv=learnt[T.q+'|'+T.r]; if(lv) for(const b in lv) s=Math.max(s,cos(lv[b]));
+        if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05;
+        const s0=s; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; all.push({T,s0}); if(!best||s>best.s) best={s,s0,T};}
       if(!best||best.s<0.75) return; /* real chords score ~0.9; noise scores lower */
       const pcs=best.T.pcs;
       if(exp.now.length&&exp.key(exp.now.map(m=>mod(m,12)))===exp.key(pcs)) notes=exp.now.slice();
       else{notes=pcs.map(pc=>this.octaveFor(pc,mag)); if(Math.max(...notes)<48) return;} /* only low rumble: a bump or handling noise, not a chord */
+      /* learn as you play: the exercise asked for this chord and the sound clearly matched it, so remember how it sounded */
+      if(exp.keys.has(exp.key(pcs))&&best.T.q!=='note'&&best.s0>=0.8){let other=0; for(const a of all) if(a.T!==best.T&&a.T.q!=='note') other=Math.max(other,a.s0);
+        if(best.s0>=other-0.04) this.learn(best.T,c,Math.min(...notes));}
     }
     notes=[...new Set(notes)].sort((a,b)=>a-b);
     for(const m of notes) Input.on('mic',m,0.7,col.ts);
@@ -2572,7 +2581,7 @@ const UI={
     if(Mic.status==='listening'){Mic.meter=h('i'); parts.push(h('p',null,'Listening to your piano. Play a chord and it shows on the screen keyboard, the way a tuner shows a note.'),
       h('div',{class:'meter'},Mic.meter),h('p',{class:'help'},'Works best close to the piano in a quiet room. Pauses while the app plays a sound. Rhythm timing is approximate; a USB cable is more precise.'),
       h('div',{style:'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'},h('button',{class:'btn sm primary',onclick:()=>{$('#midiPop').hidden=true; Calib.open();}},S.settings.micCal?'Tune again':'Tune to my piano'),h('button',{class:'btn sm',onclick:()=>Mic.stop()},'Stop listening')),
-      h('p',{class:'help'},S.settings.micCal?'Tuned to your piano. Tune again if you move the iPad or change the piano’s sound.':'Tuning takes a minute: you play C major and A minor in three octaves, and the app learns how your piano sounds through this microphone.'));}
+      h('p',{class:'help'},(S.settings.micCal?'Tuned to your piano. Tune again if you move the iPad or change the piano’s sound.':'Tuning takes a minute: you play C major and A minor in three octaves, and the app learns how your piano sounds through this microphone.')+' It also keeps learning each chord you play correctly in exercises'+(Object.keys(S.micLearn||{}).length?`, ${Object.keys(S.micLearn).length} so far.`:'.')));}
     else{if(Mic.msg&&Mic.status!=='off') parts.push(h('p',null,Mic.msg)); else parts.push(h('p',null,'No cable? Let the app listen to your piano through the microphone and check what you play.'));
       if(Mic.status!=='unsupported') parts.push(h('div',{style:'margin-top:12px'},h('button',{class:'btn primary sm',onclick:()=>Mic.start()},Mic.status==='asking'?'Starting…':'Listen with microphone')));}
     p.replaceChildren(closeBtn('Close',()=>{p.hidden=true; $('#midiBtn').focus();}),...parts);
@@ -2592,7 +2601,7 @@ const Calib={i:0,data:null,bg:null,msg:'',
   steps:[['','C',48,'C3, below middle C'],['','C',60,'middle C (C4)'],['','C',72,'C5, above middle C'],['m','A',45,'A2, low on the keyboard'],['m','A',57,'A3, just below middle C'],['m','A',69,'A4, above middle C']],
   open(){this.i=0; this.msg=''; this.data={'':[],m:[]}; Mic.calib=this; if(!Mic.on) Mic.start(); this.draw();},
   close(save){Mic.calib=null; if(this.bg){this.bg.remove(); this.bg=null;} App.piano&&App.piano.render();
-    if(save&&(this.data[''].length||this.data.m.length)){S.settings.micCal=this.data; Store.save(); say('Tuned. The app now knows how your piano sounds.',5000);}},
+    if(save&&(this.data[''].length||this.data.m.length)){S.settings.micCal=this.data; S.micLearn={}; Store.save(); say('Tuned. The app now knows how your piano sounds.',5000);}},
   capture(c){const st=this.steps[this.i]; if(!st) return; const [q,root]=st; const r=parseNote(root).pc;
     const v=Array.from({length:12},(_,k)=>c[(k+r)%12]); const iv=q===''?[0,4,7]:[0,3,7];
     const tones=iv.reduce((a,k)=>a+v[k],0), tot=v.reduce((a,b)=>a+b,0);
