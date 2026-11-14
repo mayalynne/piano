@@ -160,7 +160,7 @@ a{color:inherit}
 .ws-bottom:has(.ws-info:empty):has(.ws-actions:empty){display:none}
 .ws-fb:empty{display:none}
 body .ws-fb,body .ws-fb:empty{display:flex;min-height:24px;margin:8px 0 0;padding:0;max-width:820px;background:none;border:0;border-radius:0;font-size:15px;line-height:1.45;font-weight:400;color:var(--ink);align-items:flex-start}
-body .kb-ruler{height:22px}
+body .kb-ruler{height:34px}
 body .ws-fb.hint{color:var(--ink)}
 body .ws-fb.ok{border-left-color:var(--green)}
 .task .ws-info{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
@@ -988,7 +988,7 @@ const WHITE=[0,2,4,5,7,9,11];
 const BLACK_OFF={1:-0.07,3:0.07,6:-0.09,8:0,10:0.09};
 class Piano{
   constructor(){
-    this.lo=48;this.hi=72;this.counts=null;this.markers=[];this.extra=new Set();this.ruler=false;this.select=false;this.spellFn=null;this.flashSet=new Map();
+    this.lo=48;this.hi=84;this.counts=null;this.markers=[];this.extra=new Set();this.ruler=false;this.select=false;this.spellFn=null;this.flashSet=new Map();
     this.el=h('div',{class:'piano'});
     this.scroll=h('div',{class:'kb-scroll'}); this.inner=h('div',{class:'kb-inner'});
     this.rul=h('div',{class:'kb-ruler','aria-hidden':'true'}); this.kb=h('div',{class:'kb',role:'group','aria-label':'Piano keyboard'});
@@ -1012,7 +1012,7 @@ class Piano{
     midis=(midis||[]).filter(x=>x!=null); if(!midis.length) return;
     const mn=Math.min(...midis),mx=Math.max(...midis);
     if(!force&&mn>=this.lo&&mx<=this.hi) return;
-    const lo=Math.floor(mn/12)*12; let hi=Math.max(lo+24,Math.ceil(mx/12)*12);
+    const lo=Math.floor(mn/12)*12; let hi=Math.max(lo+36,Math.ceil(mx/12)*12); /* show three octaves by default */
     this.setRange(lo,hi);
     requestAnimationFrame(()=>{const k=this.keys.get(mn); if(k&&this.scroll.scrollWidth>this.scroll.clientWidth){this.scroll.scrollLeft=Math.max(0,(k.cx/100)*this.inner.offsetWidth-40);}});
   }
@@ -2485,6 +2485,7 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
   decide(col){
     if(!col.frames.length||col.peak<Math.max(0.0012,(this.floor||0)*6)) return; /* too quiet to be a key strike: room noise */
     const {c,raw,mag,ok}=this.chroma(col.frames); if(!ok) return;
+    if(this.calib){this.calib.capture(c); return;}
     const exp=this.expected(); let notes=null;
     if(exp.single){
       /* one note at a time: take the note that got louder at this strike, so notes still ringing don't count again */
@@ -2497,7 +2498,11 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
       const hit=exp.now.find(m=>mod(m,12)===bp); notes=[hit??this.octaveFor(bp,mag)];
     } else {
       let best=null;
-      for(const T of MIC_T){let s=0; for(let i=0;i<12;i++) s+=c[i]*T.t[i]; if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; if(!best||s>best.s) best={s,T};}
+      const cal=S.settings.micCal||{};
+      for(const T of MIC_T){let s=0; for(let i=0;i<12;i++) s+=c[i]*T.t[i];
+        /* chord shapes learned from this piano (any octave it was tuned in), moved to this root */
+        for(const v of (cal[T.q]||[])){let d=0,n=0; for(let i=0;i<12;i++){const w=v[mod(i-T.r,12)]; d+=c[i]*w; n+=w*w;} if(n) s=Math.max(s,d/Math.sqrt(n));}
+        if(T.pcs.length>3) s-=0.02; if(T.q==='note') s-=0.05; if(exp.keys.has(exp.key(T.pcs))) s+=0.06; if(!best||s>best.s) best={s,T};}
       if(!best||best.s<0.75) return; /* real chords score ~0.9; noise scores lower */
       const pcs=best.T.pcs;
       if(exp.now.length&&exp.key(exp.now.map(m=>mod(m,12)))===exp.key(pcs)) notes=exp.now.slice();
@@ -2566,7 +2571,8 @@ const UI={
     parts.push(h('h3',{style:'margin-top:18px;padding-top:14px;border-top:1px solid var(--line)'},'Microphone'));
     if(Mic.status==='listening'){Mic.meter=h('i'); parts.push(h('p',null,'Listening to your piano. Play a chord and it shows on the screen keyboard, the way a tuner shows a note.'),
       h('div',{class:'meter'},Mic.meter),h('p',{class:'help'},'Works best close to the piano in a quiet room. Pauses while the app plays a sound. Rhythm timing is approximate; a USB cable is more precise.'),
-      h('div',{style:'margin-top:10px'},h('button',{class:'btn sm',onclick:()=>Mic.stop()},'Stop listening')));}
+      h('div',{style:'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'},h('button',{class:'btn sm primary',onclick:()=>{$('#midiPop').hidden=true; Calib.open();}},S.settings.micCal?'Tune again':'Tune to my piano'),h('button',{class:'btn sm',onclick:()=>Mic.stop()},'Stop listening')),
+      h('p',{class:'help'},S.settings.micCal?'Tuned to your piano. Tune again if you move the iPad or change the piano’s sound.':'Tuning takes a minute: you play C major and A minor in three octaves, and the app learns how your piano sounds through this microphone.'));}
     else{if(Mic.msg&&Mic.status!=='off') parts.push(h('p',null,Mic.msg)); else parts.push(h('p',null,'No cable? Let the app listen to your piano through the microphone and check what you play.'));
       if(Mic.status!=='unsupported') parts.push(h('div',{style:'margin-top:12px'},h('button',{class:'btn primary sm',onclick:()=>Mic.start()},Mic.status==='asking'?'Starting…':'Listen with microphone')));}
     p.replaceChildren(closeBtn('Close',()=>{p.hidden=true; $('#midiBtn').focus();}),...parts);
@@ -2581,6 +2587,34 @@ Input.subs.add(hearUpdate);
 setInterval(()=>{if(Mic.status==='listening'){hearUpdate(); hearEl.querySelector('.lv i').style.width=micPct(Mic.level)+'%';}},80);
 /* level bar on a decibel scale, so a quiet microphone still shows movement */
 function micPct(r){return Math.max(0,Math.min(100,Math.round((20*Math.log10((r||0)+1e-9)+66)*1.8)));}
+/* ===== Tune to my piano: learn how chords sound through this microphone, in low, middle and high octaves ===== */
+const Calib={i:0,data:null,bg:null,msg:'',
+  steps:[['','C',48,'C3, below middle C'],['','C',60,'middle C (C4)'],['','C',72,'C5, above middle C'],['m','A',45,'A2, low on the keyboard'],['m','A',57,'A3, just below middle C'],['m','A',69,'A4, above middle C']],
+  open(){this.i=0; this.msg=''; this.data={'':[],m:[]}; Mic.calib=this; if(!Mic.on) Mic.start(); this.draw();},
+  close(save){Mic.calib=null; if(this.bg){this.bg.remove(); this.bg=null;} App.piano&&App.piano.render();
+    if(save&&(this.data[''].length||this.data.m.length)){S.settings.micCal=this.data; Store.save(); say('Tuned. The app now knows how your piano sounds.',5000);}},
+  capture(c){const st=this.steps[this.i]; if(!st) return; const [q,root]=st; const r=parseNote(root).pc;
+    const v=Array.from({length:12},(_,k)=>c[(k+r)%12]); const iv=q===''?[0,4,7]:[0,3,7];
+    const tones=iv.reduce((a,k)=>a+v[k],0), tot=v.reduce((a,b)=>a+b,0);
+    /* also make sure it isn't clearly a different chord (e.g. F instead of A minor) */
+    const sc=T=>{let s=0; for(let k=0;k<12;k++) s+=c[k]*T.t[k]; return s;};
+    const want=MIC_T.find(T=>T.r===r&&T.q===q), top=Math.max(...MIC_T.filter(T=>T.q!=='note').map(sc));
+    if(!tot||tones/tot<0.35||sc(want)<top-0.1){this.msg=`That didn’t sound like ${parseChord(root+q).label}. Play it again and let it ring.`; this.draw(); return;}
+    this.data[q].push(v); this.msg=''; this.next();},
+  next(){this.i++; if(this.i>=this.steps.length){this.close(true); return;} this.draw();},
+  draw(){
+    if(!this.bg){this.bg=h('div',{class:'dlg-bg'}); document.body.append(this.bg);}
+    const [q,root,low,where]=this.steps[this.i]; const ch=parseChord(root+q); const v=voicing(ch,0,low);
+    App.piano&&App.piano.configure({markers:markersFor(ch,v),fit:v,force:true,spell:ch.spell});
+    this.bg.replaceChildren(h('div',{class:'dlg',role:'dialog','aria-modal':'true','aria-label':'Tune to my piano'},
+      closeBtn('Cancel tuning',()=>this.close(false)),
+      h('h3',{style:'margin:0 36px 10px 0'},'Tune to my piano'),
+      h('ol',{class:'stepper',style:'margin:0 0 14px'},this.steps.map((s,k)=>h('li',{class:(k===this.i?'on ':'')+(k<this.i?'done':'')},String(k+1)))),
+      h('p',null,`Play ${ch.label} (${ch.tones.map(t=>pretty(t.name)).join(', ')}) starting from ${where}, once, and let it ring.`),
+      this.msg?h('p',{class:'err',style:'font-size:15px'},this.msg):h('p',{class:'meta'},Mic.on?'Listening… keep the iPad where it usually sits.':'Starting the microphone…'),
+      h('div',{class:'dlg-act'},h('button',{class:'btn ghost',onclick:()=>{this.msg=''; this.next();}},'Skip this one'))));
+  }
+};
 const toastEl=document.createElement('div'); toastEl.className='toast'; toastEl.hidden=true; toastEl.setAttribute('role','status'); const toastTxt=document.createElement('span'); toastEl.append(toastTxt,closeBtn('Close message',()=>{toastEl.hidden=true; clearTimeout(toastT);})); document.body.appendChild(toastEl); let toastT=0, lastMicSt='';
 function say(t,ms=9000){toastTxt.textContent=t; toastEl.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>{toastEl.hidden=true;},ms);}
 function micSay(){const s=Mic.status; if(s===lastMicSt) return; lastMicSt=s; if(s==='asking') say('Asking for the microphone. Tap Allow if your browser asks.'); else if(s==='listening') say('Listening. Play a note on your piano.',5000); else if(s==='blocked'||s==='unsupported') say(Mic.msg||'The microphone is not available here.',20000);}
