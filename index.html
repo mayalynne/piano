@@ -2490,14 +2490,19 @@ const Mic={on:false,status:'off',msg:'',stream:null,an:null,buf:null,td:null,tim
     if(this.calib){this.calib.capture(c); return;}
     const exp=this.expected(); let notes=null;
     if(exp.single){
-      /* one note at a time: take the note that got louder at this strike, so notes still ringing don't count again */
-      /* compare loudness before and after the strike (not normalised, so a fading note can't look new) */
-      const pre=col.pre?this.chroma([col.pre]).raw:null; let top=0; for(let i=0;i<12;i++) top=Math.max(top,raw[i]);
-      const rise=i=>(raw[i]-(pre?pre[i]*0.8:0))/(top||1);
-      let bp=0; for(let i=1;i<12;i++) if(rise(i)>rise(bp)) bp=i;
-      if(exp.now.length===1){const want=mod(exp.now[0],12); if(rise(want)>=rise(bp)*0.7) bp=want;}
-      if(rise(bp)<0.25) return;
-      const hit=exp.now.find(m=>mod(m,12)===bp); notes=[hit??this.octaveFor(bp,mag)];
+      /* one note at a time: find the pitch whose whole overtone series best explains what got louder at this strike.
+         Low notes on small speakers have almost no fundamental, so the loudest pitch is often an overtone (G for a low C). */
+      const sr=Sound.ctx.sampleRate, N=this.an.fftSize, nb=col.frames[0].length, top=Math.min(nb-2,Math.ceil(4500*N/sr));
+      const M=new Float32Array(nb); for(const fr of col.frames) for(let k=1;k<=top;k++) M[k]+=Math.pow(10,fr[k]/20)/col.frames.length;
+      if(col.pre) for(let k=1;k<=top;k++) M[k]=Math.max(0,M[k]-0.8*Math.pow(10,col.pre[k]/20));
+      const at=f=>{const k=Math.round(f*N/sr); return k<2||k>top?0:Math.max(M[k-1],M[k],M[k+1]);};
+      const sal=m=>{const f0=440*Math.pow(2,(m-69)/12); let s=0; for(let h=1;h<=10;h++){const f=f0*h; if(f>4500) break; s+=at(f)/Math.pow(h,0.3);} return s;};
+      let bm=-1,bs=0; for(let m=33;m<=96;m++){const v=sal(m); if(v>bs){bs=v;bm=m;}}
+      if(bm<0||!bs) return;
+      while(bm+12<=96&&sal(bm+12)>=bs*0.8){bm+=12; bs=sal(bm);} /* prefer the higher of two octave candidates when both fit */
+      let bp=mod(bm,12);
+      if(exp.now.length===1){const want=mod(exp.now[0],12); let ws=0; for(let m=33+mod(want-33,12);m<=96;m+=12) ws=Math.max(ws,sal(m)); if(ws>=bs*0.85) bp=want;}
+      const hit=exp.now.find(m=>mod(m,12)===bp); notes=[hit??(bp===mod(bm,12)?bm:this.octaveFor(bp,mag))];
     } else {
       let best=null;
       const cal=S.settings.micCal||{}, learnt=S.micLearn||{}; const all=[];
